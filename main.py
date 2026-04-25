@@ -1,6 +1,6 @@
 import pygame
-from game.homepage import run_homepage
-from game.game import run_game
+from homepage import run_homepage
+from game import run_game
 
 pygame.init()
 screen = pygame.display.set_mode((800, 600))
