@@ -1,45 +1,137 @@
-# OS-Escape-Room
+# Operating System Escape Room
 
-## MVP: Room 1 - Scheduling
+An interactive classroom game where players solve operating system puzzles to escape each room.
 
-The first playable room is a scheduling puzzle where the player assigns tasks and chooses a CPU scheduling algorithm.
+## Demo Format
 
-### Room 1 Objective
+We plan to present this as a live demo and make it interactive with the class, similar to an in-class game format.
 
-Assign tasks to the scheduler, switch algorithms, and compare the average waiting/turnaround times shown on screen.
+- The class helps solve puzzles in real time.
+- The winning team gets a dozen cookies.
 
-Press `Enter` in Room 1 to submit your selected algorithm. If it has the best average waiting time for the current task set, Room 2 unlocks.
+## Project Concept
 
-## MVP: Room 2 - Deadlock
+The game is built around OS concepts that players actively use while solving puzzles.
 
-Room 2 is a deadlock-prevention puzzle. The player avoids deadlock by choosing an order of process allocation steps.
+Current playable rooms:
 
-### Room 2 Objective
+1. Room 1: CPU Scheduling
+2. Room 2: Deadlock Prevention
 
-Create a 6-step process order that allows all processes to complete without deadlock:
+Planned and explored ideas include adding more puzzle rooms and richer UI interactions.
 
-- `P1` needs `R1 -> R2`
-- `P2` needs `R2 -> R3`
-- `P3` needs `R3 -> R1`
+## Tech Stack
 
-Press `Enter` in Room 2 to simulate your chosen order.
+Primary stack in this repository:
 
-### Controls
+- Python
+- Pygame
 
-- `Enter` on homepage: start game
-- `Esc`: exit current screen
-- `A`: assign/add a new task
-- `R`: reset tasks to default
-- `1`: choose FCFS
-- `2`: choose SJF (non-preemptive)
-- `3`: choose Round Robin (`q=2`)
-- `Enter` in Room 1: submit current algorithm
-- `1` / `2` / `3` in Room 2: add `P1` / `P2` / `P3` step to allocation order
-- `Backspace` in Room 2: remove last step
-- `Enter` in Room 2: simulate allocation order
-- `R` in Room 2: reset Room 2 puzzle
+Explored and discussed for future use:
 
-### Run
+- Tkinter for additional GUI puzzle panels
+- JavaScript or TypeScript based visual components
+- Additional Python game libraries as needed
+
+## General Game Flow
+
+Current implemented flow:
+
+1. Pygame runs the main game loop.
+2. Player solves an OS puzzle room.
+3. Success unlocks the next room.
+
+Proposed extended flow (future option):
+
+1. Pygame triggers a puzzle interaction.
+2. A Tkinter panel opens for that puzzle.
+3. Result is returned to Pygame and progress continues.
+
+## Team Roles
+
+- Project Manager: Dana
+- Gameplay and Logic Programmer: Areli
+- UI and Frontend Developers: Nicolas, Camrynne
+- Documentation Lead: Raymond
+
+Notes:
+
+- UI and frontend work is split between visual interface and interface logic.
+- Team members may overlap into logic and programming as needed.
+- A lead tracks progress and follow-up to keep tasks moving.
+
+## Collaboration and Organization
+
+- Code hosting: GitHub
+- Repository: https://github.com/Aarana12/OS-Escape-Room.git
+- Team communication: Discord
+- Planning cadence: Weekly sprints
+- Work tracking: what is planned, in progress, and completed is tracked through sprint check-ins and repository activity
+
+## Rough Presentation Outline
+
+1. Design Process
+2. Sprint Timeline and Progress
+3. Features
+4. Tech Stack
+5. Live Demo
+6. Takeaways, Mistakes, and Lessons Learned
+
+## Week 1 Progress Update
+
+Completed in Week 1:
+
+- Team discussion on communication tools
+- Tech stack decisions (languages, libraries, IDEs)
+- GitHub repository setup and team invites
+- Sprint planning kickoff
+- Homepage implementation for the escape room game
+
+## Current Game Details
+
+### Room 1: Scheduling
+
+Goal: choose the best scheduling algorithm for the task set.
+
+- Switch algorithms and inspect behavior.
+- Submit your choice in Room 1.
+- A correct choice unlocks Room 2.
+
+### Room 2: Deadlock Prevention
+
+Goal: build a safe allocation order so all processes complete without deadlock.
+
+- P1 needs R1 then R2
+- P2 needs R2 then R3
+- P3 needs R3 then R1
+
+## Controls
+
+Global and menu:
+
+- Enter on homepage: start game
+- Esc: exit current screen
+
+Room 1:
+
+- 1: choose FCFS
+- 2: choose SJF (non-preemptive)
+- 3: choose Round Robin (q=2)
+- A: add a new task
+- Enter: submit algorithm
+- Left and Right: replay scheduler timeline
+- R: reset tasks and attempts
+
+Room 2:
+
+- 1, 2, 3: add P1, P2, P3 to allocation order
+- Backspace: remove last step
+- Enter: simulate allocation order
+- Left and Right: replay simulation
+- Space: jump to final replay step
+- R: reset Room 2 puzzle
+
+## Run Locally
 
 Install dependencies:
 
