@@ -1,5 +1,6 @@
 import pygame
 import random
+from final_room import FinalRoom
 
 
 ROOM1_CONFIG = {
@@ -531,7 +532,18 @@ def run_game():
     tiny_font = pygame.font.SysFont("consolas", 17)
     matrix_font = pygame.font.SysFont("consolas", 18, bold=True)
 
+    final_title_font = pygame.font.SysFont("consolas", 50, bold=True)
+    final_subtitle_font = pygame.font.SysFont("consolas", 38, bold=True)
+    final_small_font = pygame.font.SysFont("consolas", 17, bold=True)
+
     matrix_rain = MatrixRain(matrix_font)
+
+    final_room = FinalRoom(
+        final_title_font,
+        final_subtitle_font,
+        final_small_font,
+        matrix_font,
+    )
 
     room1_config = ROOM1_CONFIG
     tasks = [dict(t) for t in room1_config["tasks"]]
@@ -555,7 +567,7 @@ def run_game():
     room2_config = ROOM2_CONFIG
     room2_sequence = []
     room2_max_steps = room2_config["max_steps"]
-    room2_status = "not-started"
+    room2_status = "unsolved"
     room2_timeline = []
     room2_replay_index = -1
     room2_chain = []
@@ -565,11 +577,16 @@ def run_game():
     while running:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
+                pygame.mouse.set_visible(True)
                 return
 
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
+                    pygame.mouse.set_visible(True)
                     return
+
+                if room_state == "finale":
+                    continue
 
                 # Room 2 Controls
                 if room_state == "room2":
@@ -625,6 +642,8 @@ def run_game():
                                 if simulation["success"]:
                                     room2_status = "solved"
                                     message = "ACCESS GRANTED: Safe sequence verified. Deadlock prevented."
+                                    room_state = "finale"
+                                    final_room.reset()
                                 else:
                                     room2_status = "failed"
                                     message = "DEADLOCK DETECTED: Press R to reset and try a safer order."
@@ -647,7 +666,7 @@ def run_game():
 
                     continue
 
-                # room 1 controls
+                # Room 1 Controls
                 if event.key == pygame.K_LEFT:
                     room1_replay_index = max(0, room1_replay_index - 1)
                     message = f"TIMELINE TICK {room1_sim['snapshots'][room1_replay_index]['tick']}."
@@ -732,10 +751,19 @@ def run_game():
                     task_edits_used = 0
                     message = "ROOM 1 RESET: Default tasks restored."
 
+        # IMPORTANT: this must be OUTSIDE the event loop.
+        if room_state == "finale":
+            final_room.update_and_draw(screen, pygame.mouse.get_pos())
+            pygame.display.flip()
+            clock.tick(60)
+            continue
+
+        pygame.mouse.set_visible(True)
+
         # Matrix background for all gameplay screens
         matrix_rain.update_and_draw(screen)
 
-        #Room 2 Renderer
+        # Room 2 Renderer
         if room_state == "room2":
             if room2_replay_index >= 0 and room2_timeline:
                 snap = room2_timeline[room2_replay_index]
@@ -753,7 +781,6 @@ def run_game():
 
             draw_matrix_label(screen, title_font, "ROOM 2: DEADLOCK PREVENTION", (20, 8), MATRIX_GREEN)
 
-            # Mission panel
             draw_matrix_panel(screen, pygame.Rect(20, 48, 760, 74))
             mission_lines = [
                 "MISSION: Prevent deadlock by choosing a safe resource allocation order.",
@@ -764,7 +791,6 @@ def run_game():
             for i, line in enumerate(mission_lines):
                 screen.blit(tiny_font.render(line, True, MATRIX_LIGHT_GREEN), (28, 56 + i * 22))
 
-            # Allocation order panel
             draw_matrix_panel(screen, pygame.Rect(20, 126, 760, 46))
             seq_text = " -> ".join(room2_sequence) if room2_sequence else "(empty)"
 
@@ -781,7 +807,6 @@ def run_game():
 
             screen.blit(tiny_font.render(ctrl, True, MATRIX_GRAY), (28, 155))
 
-            # State colors
             state_colors = {
                 "ready": ((3, 22, 12), MATRIX_CYAN),
                 "running": ((0, 70, 25), MATRIX_GREEN),
@@ -789,7 +814,6 @@ def run_game():
                 "terminated": ((10, 10, 10), MATRIX_GRAY),
             }
 
-            # Process state boxes
             for i, pid in enumerate(room2_config["processes"]):
                 bx, by = 20, 178 + i * 56
                 state = disp_states.get(pid, "ready")
@@ -802,7 +826,6 @@ def run_game():
                 screen.blit(tiny_font.render(f"{pid} [{state.upper()}]", True, fg), (bx + 8, by + 8))
                 screen.blit(tiny_font.render(f"holds: {held_list}", True, MATRIX_GRAY), (bx + 8, by + 28))
 
-            # Resource ownership boxes
             for i, rid in enumerate(room2_config["resources"]):
                 bx, by = 258, 178 + i * 56
                 owner = disp_resources.get(rid)
@@ -819,7 +842,6 @@ def run_game():
                 screen.blit(tiny_font.render(rid, True, fg), (bx + 8, by + 8))
                 screen.blit(tiny_font.render(owner_text, True, MATRIX_GRAY), (bx + 8, by + 28))
 
-            # Current step panel
             draw_matrix_panel(screen, pygame.Rect(448, 178, 332, 166), MATRIX_CYAN, MATRIX_DARK_PANEL)
 
             screen.blit(tiny_font.render("CURRENT STEP", True, MATRIX_CYAN), (458, 186))
@@ -840,7 +862,6 @@ def run_game():
             else:
                 screen.blit(tiny_font.render("Build order and press ENTER.", True, MATRIX_GRAY), (458, 208))
 
-            # Event log
             draw_matrix_panel(screen, pygame.Rect(20, 352, 760, 134), MATRIX_GREEN, MATRIX_DARK_PANEL)
             draw_matrix_label(screen, body_font, "EVENT LOG", (30, 360), MATRIX_GREEN)
 
@@ -859,13 +880,11 @@ def run_game():
             else:
                 screen.blit(tiny_font.render("No events yet.", True, MATRIX_GRAY), (30, 386))
 
-            # Deadlock feedback
             if room2_status == "failed" and room2_chain:
                 screen.blit(tiny_font.render("DEADLOCK: circular wait detected —", True, MATRIX_RED), (20, 492))
                 chain_text = " | ".join(room2_chain)
                 screen.blit(tiny_font.render(chain_text[:98], True, MATRIX_YELLOW), (20, 511))
 
-            # Status and message
             status_color = MATRIX_GREEN if room2_status == "solved" else MATRIX_RED if room2_status == "failed" else MATRIX_GRAY
 
             screen.blit(tiny_font.render(f"STATUS: {room2_status.upper()}", True, status_color), (20, 534))
@@ -875,7 +894,7 @@ def run_game():
             clock.tick(60)
             continue
 
-        # room 1 failed
+        # Room 1 Failed Renderer
         if room_state == "room1_failed":
             draw_matrix_panel(screen, pygame.Rect(130, 140, 540, 300), MATRIX_RED, MATRIX_DARK_PANEL)
 
@@ -890,10 +909,9 @@ def run_game():
             clock.tick(60)
             continue
 
-        #room 1 renderer
+        # Room 1 Renderer
         draw_matrix_label(screen, title_font, "ROOM 1: CPU SCHEDULING", (20, 8), MATRIX_GREEN)
 
-        # Mission / info bar
         draw_matrix_panel(screen, pygame.Rect(20, 48, 760, 46), MATRIX_GREEN, MATRIX_DARK_PANEL)
 
         screen.blit(
@@ -912,7 +930,6 @@ def run_game():
             (28, 74),
         )
 
-        # Algorithm selector buttons
         alg_labels = [("FCFS", "1"), ("SJF", "2"), ("RR", "3")]
 
         for i, (alg, key) in enumerate(alg_labels):
@@ -927,10 +944,8 @@ def run_game():
 
             screen.blit(tiny_font.render(f"[{key}] {alg}", True, label_color), (bx + 10, 108))
 
-        # Current snapshot
         snap = room1_sim["snapshots"][room1_replay_index]
 
-        # Task state boxes
         task_state_colors = {
             "not-arrived": ((8, 8, 8), (90, 100, 90)),
             "ready": ((3, 22, 12), MATRIX_CYAN),
@@ -951,7 +966,6 @@ def run_game():
                 (bx + 8, by + 26),
             )
 
-        # Per-task wait/turnaround table
         table_height = 46 * len(tasks) + 4
         draw_matrix_panel(screen, pygame.Rect(260, 140, 240, table_height), MATRIX_GREEN, MATRIX_DARK_PANEL)
 
@@ -964,7 +978,6 @@ def run_game():
 
             screen.blit(tiny_font.render(f"{task['name']}: {w:>3}       {t:>3}", True, MATRIX_WHITE), (268, by))
 
-        # Current tick panel
         draw_matrix_panel(screen, pygame.Rect(510, 140, 270, table_height), MATRIX_CYAN, MATRIX_DARK_PANEL)
 
         tick_label = f"TICK {snap['tick']} [{room1_replay_index + 1}/{len(room1_sim['snapshots'])}]"
@@ -990,7 +1003,6 @@ def run_game():
 
         screen.blit(tiny_font.render("<- LEFT / RIGHT ->", True, MATRIX_GRAY), (518, 236))
 
-        # CPU Execution Timeline bar
         tl_x, tl_y, tl_h = 20, 312, 30
 
         bar_colors = {}
@@ -1036,7 +1048,6 @@ def run_game():
         ph_x = int(tl_x + current_tick * px_per_tick)
         pygame.draw.line(screen, MATRIX_YELLOW, (ph_x, tl_y), (ph_x, tl_y + tl_h + 18), 2)
 
-        # Educational feedback panel
         fb_y = 370
         draw_matrix_panel(screen, pygame.Rect(20, fb_y, 760, 80), MATRIX_GREEN, MATRIX_DARK_PANEL)
 
@@ -1051,7 +1062,6 @@ def run_game():
                 (28, fb_y + 24),
             )
 
-        # Status / message
         screen.blit(tiny_font.render(message, True, MATRIX_WHITE), (20, 458))
 
         pygame.display.flip()
