@@ -1,812 +1,530 @@
 import pygame
+import random
+import textwrap
 
+SCREEN_WIDTH = 800
+SCREEN_HEIGHT = 600
 
-ROOM1_CONFIG = {
-    "room": "scheduling_1",
-    "tasks": [
-        {"name": "T1", "arrival": 0, "burst": 5},
-        {"name": "T2", "arrival": 1, "burst": 3},
-        {"name": "T3", "arrival": 2, "burst": 2},
-    ],
-    "algorithms": ["FCFS", "SJF", "RR"],
-    "quantum": 2,
-    "max_submit_attempts": 3,
-    "max_task_edits": 3,
-    "goal": "choose_best_algorithm",
-}
+# Dana/Team OS Escape Room: 9-room state-based game.
+# Controls: mouse click to explore, type answers in puzzle mode, ENTER submit, ESC quit.
 
-ROOM2_CONFIG = {
-    "room": "deadlock_1",
-    "processes": ["P1", "P2", "P3"],
-    "resources": ["R1", "R2", "R3"],
-    "needs": {
-        "P1": ["R1", "R2"],
-        "P2": ["R2", "R3"],
-        "P3": ["R3", "R1"],
+ROOMS = [
+    {
+        "title": "Room 1: CPU Scheduling Lab",
+        "topic": "CPU Scheduling",
+        "theme": "A dusty scheduler office with blinking ready queues and a tired CPU throne.",
+        "concept": "CPU scheduling decides which ready process gets the CPU next.",
+        "palette": ((12, 9, 24), (58, 35, 95), (255, 210, 85)),
+        "question": "Which non-preemptive scheduling algorithm chooses the process with the smallest CPU burst next?",
+        "answers": ["sjf", "shortest job first"],
+        "hint1": "The clock is grumpy. It hates long jobs blocking tiny jobs. Look where the shortest task would hide.",
+        "hint2": "Correct! Hint #2: the next clue is near the READY QUEUE. Short jobs love cutting politely in line.",
+        "hint3": "Riddle: I schedule who goes IN, then kick them OUT when their burst is done. I/O? More like I/Owe you a key. Check the CPU throne.",
+        "objects": {
+            "hint1": (80, 390, 130, 80, "Wall Clock"),
+            "puzzle": (520, 190, 170, 100, "Burst Chart"),
+            "hint3": (305, 330, 190, 85, "Ready Queue"),
+            "key": (335, 175, 125, 95, "CPU Throne"),
+            "decoy": (90, 150, 140, 100, "Old Printer"),
+        },
     },
-    "max_steps": 6,
-    "goal": "complete_without_deadlock",
-}
-
-def _fcfs(tasks):
-    ordered = sorted(tasks, key=lambda task: task["arrival"])
-    timeline = []
-    current_time = 0
-    for task in ordered:
-        if current_time < task["arrival"]:
-            current_time = task["arrival"]
-        start_time = current_time
-        finish_time = start_time + task["burst"]
-        wait_time = start_time - task["arrival"]
-        turnaround_time = finish_time - task["arrival"]
-        timeline.append(
-            {
-                "name": task["name"],
-                "start": start_time,
-                "finish": finish_time,
-                "wait": wait_time,
-                "turnaround": turnaround_time,
-            }
-        )
-        current_time = finish_time
-    return timeline
-
-
-def _sjf_non_preemptive(tasks):
-    pending = [dict(task) for task in tasks]
-    timeline = []
-    current_time = 0
-
-    while pending:
-        available = [task for task in pending if task["arrival"] <= current_time]
-        if not available:
-            current_time = min(task["arrival"] for task in pending)
-            available = [task for task in pending if task["arrival"] <= current_time]
-
-        chosen = min(available, key=lambda task: (task["burst"], task["arrival"], task["name"]))
-        start_time = current_time
-        finish_time = start_time + chosen["burst"]
-        wait_time = start_time - chosen["arrival"]
-        turnaround_time = finish_time - chosen["arrival"]
-
-        timeline.append(
-            {
-                "name": chosen["name"],
-                "start": start_time,
-                "finish": finish_time,
-                "wait": wait_time,
-                "turnaround": turnaround_time,
-            }
-        )
-
-        current_time = finish_time
-        pending.remove(chosen)
-
-    return timeline
-
-
-def _round_robin(tasks, quantum=2):
-    ready = []
-    pending = sorted([dict(task) for task in tasks], key=lambda task: task["arrival"])
-    remaining = {task["name"]: task["burst"] for task in tasks}
-    completion_time = {}
-    slices = []
-
-    current_time = 0
-    index = 0
-
-    while index < len(pending) or ready:
-        while index < len(pending) and pending[index]["arrival"] <= current_time:
-            ready.append(pending[index]["name"])
-            index += 1
-
-        if not ready:
-            current_time = pending[index]["arrival"]
-            continue
-
-        current_name = ready.pop(0)
-        run_time = min(quantum, remaining[current_name])
-        start_time = current_time
-        finish_time = current_time + run_time
-        slices.append(f"{current_name}[{start_time}-{finish_time}]")
-
-        current_time = finish_time
-        remaining[current_name] -= run_time
-
-        while index < len(pending) and pending[index]["arrival"] <= current_time:
-            ready.append(pending[index]["name"])
-            index += 1
-
-        if remaining[current_name] > 0:
-            ready.append(current_name)
-        else:
-            completion_time[current_name] = current_time
-
-    timeline = []
-    for task in tasks:
-        finish_time = completion_time[task["name"]]
-        turnaround_time = finish_time - task["arrival"]
-        wait_time = turnaround_time - task["burst"]
-        timeline.append(
-            {
-                "name": task["name"],
-                "start": None,
-                "finish": finish_time,
-                "wait": wait_time,
-                "turnaround": turnaround_time,
-            }
-        )
-
-    timeline.sort(key=lambda item: item["finish"])
-    return timeline, slices
-
-
-def _build_result(tasks, algorithm_name):
-    if algorithm_name == "FCFS":
-        timeline = _fcfs(tasks)
-        slices = []
-    elif algorithm_name == "SJF":
-        timeline = _sjf_non_preemptive(tasks)
-        slices = []
-    else:
-        timeline, slices = _round_robin(tasks, quantum=2)
-
-    avg_wait = sum(item["wait"] for item in timeline) / len(timeline)
-    avg_turnaround = sum(item["turnaround"] for item in timeline) / len(timeline)
-
-    return {
-        "timeline": timeline,
-        "avg_wait": avg_wait,
-        "avg_turnaround": avg_turnaround,
-        "slices": slices,
-        "algorithm": algorithm_name,
-    }
-
-
-def _best_algorithms_for_tasks(tasks):
-    algorithm_names = ["FCFS", "SJF", "RR"]
-    wait_by_algorithm = {}
-    for algorithm_name in algorithm_names:
-        wait_by_algorithm[algorithm_name] = _build_result(tasks, algorithm_name)["avg_wait"]
-
-    best_wait = min(wait_by_algorithm.values())
-    epsilon = 1e-9
-    return [
-        algorithm_name
-        for algorithm_name, avg_wait in wait_by_algorithm.items()
-        if abs(avg_wait - best_wait) < epsilon
-    ]
-
-
-def _build_scheduler_timeline(tasks, algorithm_name, quantum=2):
-    """Return a list of tick-by-tick snapshots for replay/visualisation."""
-    if algorithm_name == "FCFS":
-        base = _fcfs(tasks)
-        slices_raw = [(row["name"], row["start"], row["finish"]) for row in base]
-    elif algorithm_name == "SJF":
-        base = _sjf_non_preemptive(tasks)
-        slices_raw = [(row["name"], row["start"], row["finish"]) for row in base]
-    else:
-        base, slice_strs = _round_robin(tasks, quantum)
-        slices_raw = []
-        for s in slice_strs:
-            name, rest = s.split("[")
-            t0, t1 = rest.rstrip("]").split("-")
-            slices_raw.append((name, int(t0), int(t1)))
-
-    arrival = {t["name"]: t["arrival"] for t in tasks}
-    burst = {t["name"]: t["burst"] for t in tasks}
-    all_names = [t["name"] for t in tasks]
-
-    # Build per-tick snapshots using slice list
-    snapshots = []
-    tick = 0
-    for (running_name, t_start, t_end) in slices_raw:
-        for t in range(t_start, t_end):
-            states = {}
-            for name in all_names:
-                if name == running_name:
-                    states[name] = "running"
-                else:
-                    # finished if burst already fully consumed before this tick
-                    done = all(
-                        (sn == name and st_end <= t)
-                        for (sn, st_s, st_end) in slices_raw
-                        if sn == name and st_s < t
-                    )
-                    if done:
-                        states[name] = "terminated"
-                    elif arrival[name] <= t:
-                        states[name] = "ready"
-                    else:
-                        states[name] = "not-arrived"
-            snapshots.append({
-                "tick": t,
-                "running": running_name,
-                "states": states,
-                "slice_label": f"{running_name} [{t_start}-{t_end}]",
-            })
-        tick = t_end
-
-    # Final tick: all terminated
-    final_states = {name: "terminated" for name in all_names}
-    snapshots.append({
-        "tick": tick,
-        "running": None,
-        "states": final_states,
-        "slice_label": "done",
-    })
-
-    result = _build_result(tasks, algorithm_name)
-    wait_map = {row["name"]: row["wait"] for row in result["timeline"]}
-    turnaround_map = {row["name"]: row["turnaround"] for row in result["timeline"]}
-
-    return {
-        "snapshots": snapshots,
-        "slices_raw": slices_raw,
-        "avg_wait": result["avg_wait"],
-        "avg_turnaround": result["avg_turnaround"],
-        "wait_map": wait_map,
-        "turnaround_map": turnaround_map,
-        "algorithm": algorithm_name,
-    }
+    {
+        "title": "Room 2: OS Services Desk",
+        "topic": "Services",
+        "theme": "A service counter where the OS clerk stamps I/O, files, execution, and errors.",
+        "concept": "Operating systems provide services like program execution, I/O operations, file-system manipulation, communication, and error detection.",
+        "palette": ((4, 20, 26), (13, 70, 84), (0, 255, 180)),
+        "question": "What OS service lets a running program read/write a file or device?",
+        "answers": ["i/o", "io", "i/o operations", "io operations", "input output", "input/output"],
+        "hint1": "The clerk says: requests go in, results go out. Check the ticket machine first.",
+        "hint2": "Correct! Hint #2: find the device that literally takes input and output. It is feeling keyboard-smashy.",
+        "hint3": "Riddle: I go IN and OUT all day, but I'm not your weird uncle at Longhorn. The key is where the keys already live.",
+        "objects": {
+            "hint1": (90, 170, 150, 90, "Ticket Machine"),
+            "puzzle": (505, 160, 190, 100, "Service Forms"),
+            "hint3": (270, 390, 190, 80, "I/O Terminal"),
+            "key": (515, 390, 155, 80, "Keyboard"),
+            "decoy": (90, 395, 120, 75, "Trash Bin"),
+        },
+    },
+    {
+        "title": "Room 3: OS Structures Tower",
+        "topic": "Structures",
+        "theme": "A tower of kernel layers, modules, and tiny microkernel message tubes.",
+        "concept": "OS structure can be simple, layered, microkernel-based, or modular.",
+        "palette": ((20, 14, 18), (86, 52, 52), (255, 115, 115)),
+        "question": "Which OS structure moves as much as possible from the kernel into user space and uses message passing?",
+        "answers": ["microkernel", "micro kernel"],
+        "hint1": "The tower is stacked in layers, but the smallest kernel is hiding in a tiny mailbox.",
+        "hint2": "Correct! Hint #2: message passing is the gossip pipeline of this room. Follow the message tubes.",
+        "hint3": "Riddle: I keep the kernel tiny, because drama belongs in user space. Your key passed a note through the mailbox.",
+        "objects": {
+            "hint1": (95, 345, 145, 105, "Layer Stack"),
+            "puzzle": (525, 130, 150, 130, "Kernel Diagram"),
+            "hint3": (310, 260, 175, 95, "Message Tubes"),
+            "key": (530, 385, 140, 80, "Mailbox"),
+            "decoy": (90, 135, 120, 75, "DOS Box"),
+        },
+    },
+    {
+        "title": "Room 4: Process Morgue",
+        "topic": "Processes",
+        "theme": "Processes are born, run, wait, and terminate under flickering green lamps.",
+        "concept": "A process is a program in execution; it moves through states such as new, ready, running, waiting, and terminated.",
+        "palette": ((8, 16, 10), (31, 82, 42), (125, 255, 130)),
+        "question": "What do we call a program while it is actively executing?",
+        "answers": ["process", "a process"],
+        "hint1": "The birth certificate says NEW, but the toe tag says TERMINATED. Start at the process table.",
+        "hint2": "Correct! Hint #2: the next clue is at the WAITING bench. Something is blocked and being dramatic.",
+        "hint3": "Riddle: I was new, then ready, then running; now I'm waiting for attention like a group project reply. Check the exit status drawer.",
+        "objects": {
+            "hint1": (90, 150, 175, 95, "Process Table"),
+            "puzzle": (505, 165, 185, 100, "State Machine"),
+            "hint3": (300, 395, 185, 80, "Waiting Bench"),
+            "key": (525, 390, 150, 80, "Exit Status"),
+            "decoy": (95, 395, 145, 75, "Zombie File"),
+        },
+    },
+    {
+        "title": "Room 5: Thread Weaving Room",
+        "topic": "Threads",
+        "theme": "A neon loom spins multiple threads through one shared process blanket.",
+        "concept": "Threads are lightweight execution units that can share a process's code, data, and resources.",
+        "palette": ((18, 8, 28), (70, 27, 105), (220, 130, 255)),
+        "question": "Threads in the same process share the same address space: true or false?",
+        "answers": ["true", "t", "yes", "y"],
+        "hint1": "Many threads, one messy closet. The clue is tangled in the loom.",
+        "hint2": "Correct! Hint #2: sharing is caring until everyone writes at once. Check shared memory.",
+        "hint3": "Riddle: We run separate paths but raid the same fridge. The key is caught in the yarn spool.",
+        "objects": {
+            "hint1": (95, 330, 170, 100, "Thread Loom"),
+            "puzzle": (520, 155, 170, 105, "Thread Cards"),
+            "hint3": (300, 180, 185, 90, "Shared Memory"),
+            "key": (525, 385, 145, 85, "Yarn Spool"),
+            "decoy": (85, 140, 135, 75, "Single Sock"),
+        },
+    },
+    {
+        "title": "Room 6: Synchronization Vault",
+        "topic": "Synchronization",
+        "theme": "A vault where race conditions sprint, mutexes guard doors, and semaphores count snacks.",
+        "concept": "Synchronization prevents race conditions by controlling access to critical sections using tools like mutex locks and semaphores.",
+        "palette": ((24, 12, 4), (92, 55, 16), (255, 170, 60)),
+        "question": "What is the section of code where shared data is accessed and must be protected?",
+        "answers": ["critical section", "critical-section", "critical"],
+        "hint1": "Two gremlins changed counter at the same time. The first clue is near the racing scoreboard.",
+        "hint2": "Correct! Hint #2: only one at a time may pass. Go bother the mutex guard.",
+        "hint3": "Riddle: I lock the door before chaos gets in. If you release me nicely, I'll release the key. Check the vault lock.",
+        "objects": {
+            "hint1": (95, 145, 175, 95, "Race Board"),
+            "puzzle": (515, 155, 175, 105, "Counter Code"),
+            "hint3": (300, 390, 185, 80, "Mutex Guard"),
+            "key": (535, 385, 135, 85, "Vault Lock"),
+            "decoy": (95, 390, 140, 80, "Snack Semaphore"),
+        },
+    },
+    {
+        "title": "Room 7: Deadlock Dining Room",
+        "topic": "Deadlocks",
+        "theme": "Processes sit at a cursed dinner table, each holding one fork and waiting forever.",
+        "concept": "Deadlock can occur when mutual exclusion, hold and wait, no preemption, and circular wait all hold at the same time.",
+        "palette": ((22, 4, 8), (80, 18, 28), (255, 90, 120)),
+        "question": "Which deadlock condition means each process is waiting in a closed loop for another process's resource?",
+        "answers": ["circular wait", "circular-wait"],
+        "hint1": "Everyone at dinner is holding something and side-eyeing someone else. Check the circular table.",
+        "hint2": "Correct! Hint #2: break the loop. The next clue is where the resource graph bends back on itself.",
+        "hint3": "Riddle: I can't leave because you can't leave because they can't leave. Very group chat. The key is under the last fork.",
+        "objects": {
+            "hint1": (105, 350, 170, 100, "Circular Table"),
+            "puzzle": (510, 145, 185, 105, "Deadlock Rules"),
+            "hint3": (300, 165, 190, 95, "Resource Graph"),
+            "key": (535, 390, 130, 80, "Last Fork"),
+            "decoy": (95, 140, 130, 75, "Cold Soup"),
+        },
+    },
+    {
+        "title": "Room 8: Main Memory Maze",
+        "topic": "Main Memory",
+        "theme": "A maze of frames, holes, base registers, limits, and suspiciously tiny fragments.",
+        "concept": "Main memory management uses techniques such as contiguous allocation, paging, segmentation, relocation, and protection.",
+        "palette": ((5, 11, 24), (25, 55, 105), (105, 190, 255)),
+        "question": "In paging, physical memory is divided into fixed-size blocks called what?",
+        "answers": ["frames", "frame"],
+        "hint1": "The memory hole is too small to be useful and is now emotionally fragmented. Look near the tiny holes.",
+        "hint2": "Correct! Hint #2: pages need frames. Go to the page table before it gets invalid.",
+        "hint3": "Riddle: I split your program into pages and scatter them like laundry. The key is sitting in a free frame.",
+        "objects": {
+            "hint1": (90, 160, 165, 95, "Tiny Holes"),
+            "puzzle": (515, 155, 175, 105, "Paging Quiz"),
+            "hint3": (300, 390, 185, 80, "Page Table"),
+            "key": (535, 390, 145, 80, "Free Frame"),
+            "decoy": (95, 390, 140, 75, "Limit Register"),
+        },
+    },
+    {
+        "title": "Room 9: Virtual Memory Exit",
+        "topic": "Virtual Memory",
+        "theme": "The final chamber glitches: half the room is in memory, half is on disk, all of it is judging you.",
+        "concept": "Virtual memory separates logical memory from physical memory and uses demand paging, page faults, and replacement algorithms.",
+        "palette": ((10, 4, 18), (45, 18, 78), (0, 230, 255)),
+        "question": "What event happens when a needed page is not currently in main memory?",
+        "answers": ["page fault", "pagefault", "fault"],
+        "hint1": "The room is bigger than the building. Start at the impossible mirror.",
+        "hint2": "Correct! Hint #2: the missing page is not gone, just not loaded. Check the swap portal.",
+        "hint3": "Riddle: I am not here, but I can still run. My page is fashionably late from disk. The final key is in the fault trap.",
+        "objects": {
+            "hint1": (90, 150, 170, 95, "Impossible Mirror"),
+            "puzzle": (515, 150, 175, 105, "Demand Pager"),
+            "hint3": (295, 390, 190, 80, "Swap Portal"),
+            "key": (540, 388, 135, 82, "Fault Trap"),
+            "decoy": (95, 395, 135, 75, "Belady Ghost"),
+        },
+    },
+]
 
 
-def _educational_feedback_room1(tasks, selected_algorithm):
-    best = _best_algorithms_for_tasks(tasks)
-    results = {alg: _build_result(tasks, alg) for alg in ["FCFS", "SJF", "RR"]}
+def normalize(text):
+    return text.strip().lower().replace("_", " ")
+
+
+def wrap_lines(text, font, width):
+    # Character-based wrapping works well enough with pygame default fonts.
+    chars = max(25, width // 9)
     lines = []
-    if selected_algorithm in best:
-        lines.append(f"{selected_algorithm} is correct — lowest avg wait time.")
-    else:
-        best_str = " or ".join(best)
-        sel_wait = results[selected_algorithm]["avg_wait"]
-        best_wait = results[best[0]]["avg_wait"]
-        lines.append(f"{selected_algorithm} avg wait = {sel_wait:.1f}  |  {best_str} avg wait = {best_wait:.1f}")
-        if selected_algorithm == "FCFS":
-            lines.append("FCFS runs tasks in arrival order — longer tasks can block shorter ones (convoy effect).")
-        elif selected_algorithm == "RR":
-            lines.append("Round Robin splits time fairly but adds overhead — better for fairness than throughput.")
-        if "SJF" in best:
-            lines.append("SJF picks the shortest remaining burst first, minimising average wait time here.")
+    for part in str(text).split("\n"):
+        lines.extend(textwrap.wrap(part, chars) or [""])
     return lines
 
 
-def _simulate_deadlock_resolution(order, config):
-    needs = config["needs"]
-    process_ids = config["processes"]
-    resource_ids = config["resources"]
-    resources = {r: None for r in resource_ids}
-    progress = {p: 0 for p in process_ids}
-    held = {p: set() for p in process_ids}
-    timeline = []
+def draw_text(screen, font, text, x, y, color=(235, 240, 255), width=720, line_gap=4):
+    yy = y
+    for line in wrap_lines(text, font, width):
+        screen.blit(font.render(line, True, color), (x, yy))
+        yy += font.get_height() + line_gap
+    return yy
 
-    def _get_state(pid):
-        if progress[pid] >= len(needs[pid]):
-            return "terminated"
-        wanted = needs[pid][progress[pid]]
-        owner = resources[wanted]
-        if owner is not None and owner != pid:
-            return "blocked"
-        return "ready"
 
-    for step, process_id in enumerate(order, start=1):
-        max_steps_needed = len(needs[process_id])
-        if progress[process_id] >= max_steps_needed:
-            event = f"{process_id} already finished."
-            action = "already_finished"
-        else:
-            wanted_resource = needs[process_id][progress[process_id]]
-            owner = resources[wanted_resource]
-            if owner is None:
-                resources[wanted_resource] = process_id
-                held[process_id].add(wanted_resource)
-                progress[process_id] += 1
-                if progress[process_id] == max_steps_needed:
-                    for r in list(held[process_id]):
-                        resources[r] = None
-                    held[process_id].clear()
-                    event = f"{process_id} acquires {wanted_resource}, completes, and releases all resources."
-                    action = "completed"
-                else:
-                    event = f"{process_id} acquires {wanted_resource}."
-                    action = "acquired"
-            else:
-                event = f"{process_id} blocked — {wanted_resource} held by {owner}."
-                action = "blocked"
+def draw_button(screen, rect, label, font, fill, border, text_color=(255, 255, 255)):
+    pygame.draw.rect(screen, fill, rect, border_radius=10)
+    pygame.draw.rect(screen, border, rect, 2, border_radius=10)
+    label_img = font.render(label, True, text_color)
+    label_rect = label_img.get_rect(center=rect.center)
+    screen.blit(label_img, label_rect)
 
-        states = {pid: _get_state(pid) for pid in process_ids}
-        if action in ("acquired", "completed"):
-            states[process_id] = "running"
 
-        snapshot = {
-            "step": step,
-            "process_id": process_id,
-            "action": action,
-            "event": event,
-            "states": dict(states),
-            "held": {p: set(s) for p, s in held.items()},
-            "resources": dict(resources),
-            "progress": dict(progress),
-            "deadlock": False,
-            "chain": [],
+def draw_escape_background(screen, room, tick):
+    base, wall, accent = room["palette"]
+    screen.fill(base)
+
+    # Back wall and floor perspective.
+    pygame.draw.rect(screen, wall, pygame.Rect(55, 70, 690, 330), border_radius=8)
+    pygame.draw.polygon(screen, tuple(max(c - 22, 0) for c in wall), [(55, 400), (745, 400), (800, 600), (0, 600)])
+
+    # CRT scanlines and flicker.
+    flicker = 18 if (tick // 18) % 2 == 0 else 0
+    for y in range(0, SCREEN_HEIGHT, 8):
+        pygame.draw.line(screen, (0, 0, 0), (0, y), (SCREEN_WIDTH, y), 1)
+    glow = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+    for i in range(4):
+        pygame.draw.rect(glow, (*accent, 18 + flicker), pygame.Rect(65 - i * 3, 80 - i * 3, 670 + i * 6, 310 + i * 6), 2, border_radius=10)
+    screen.blit(glow, (0, 0))
+
+    # Ceiling lamp.
+    pygame.draw.line(screen, accent, (400, 0), (400, 85), 3)
+    pygame.draw.circle(screen, accent, (400, 95), 25)
+    pygame.draw.circle(screen, (255, 255, 220), (400, 95), 10)
+
+    # Door.
+    pygame.draw.rect(screen, (18, 12, 20), pygame.Rect(355, 200, 90, 200), border_radius=6)
+    pygame.draw.rect(screen, accent, pygame.Rect(355, 200, 90, 200), 2, border_radius=6)
+    pygame.draw.circle(screen, accent, (430, 300), 5)
+
+
+class EscapeRoomGame:
+    def __init__(self, screen):
+        self.screen = screen
+        self.clock = pygame.time.Clock()
+        self.title_font = pygame.font.SysFont("consolas", 30, bold=True)
+        self.body_font = pygame.font.SysFont("consolas", 20)
+        self.small_font = pygame.font.SysFont("consolas", 16)
+        self.big_font = pygame.font.SysFont("consolas", 48, bold=True)
+        self.room_index = 0
+        self.mode = "room"  # room, question, hallway, freedom
+        self.answer_text = ""
+        self.message = "Click objects to search the room. Find Hint #1 first."
+        self.tick = 0
+        self.room_progress = [self.new_progress() for _ in ROOMS]
+        self.transition_timer = 0
+
+    @staticmethod
+    def new_progress():
+        return {
+            "hint1": False,
+            "question_open": False,
+            "question_solved": False,
+            "hint3": False,
+            "key": False,
+            "escaped": False,
+            "searched_decoys": set(),
         }
 
-        unfinished = [pid for pid in process_ids if progress[pid] < len(needs[pid])]
-        if unfinished:
-            blocked_pids = [
-                pid for pid in unfinished
-                if resources[needs[pid][progress[pid]]] is not None
-                and resources[needs[pid][progress[pid]]] != pid
-            ]
-            if len(blocked_pids) == len(unfinished):
-                chain = [
-                    f"{pid} waits for {needs[pid][progress[pid]]} held by {resources[needs[pid][progress[pid]]]}"
-                    for pid in unfinished
-                ]
-                snapshot["deadlock"] = True
-                snapshot["chain"] = chain
-                snapshot["event"] += " -> DEADLOCK!"
-                timeline.append(snapshot)
-                return {"success": False, "timeline": timeline, "chain": chain}
+    @property
+    def room(self):
+        return ROOMS[self.room_index]
 
-        timeline.append(snapshot)
+    @property
+    def progress(self):
+        return self.room_progress[self.room_index]
 
-    if all(progress[p] >= len(needs[p]) for p in process_ids):
-        return {"success": True, "timeline": timeline, "chain": []}
+    def object_at(self, pos):
+        for obj_id, data in self.room["objects"].items():
+            x, y, w, h, label = data
+            if pygame.Rect(x, y, w, h).collidepoint(pos):
+                return obj_id
+        return None
 
-    return {"success": False, "timeline": timeline, "chain": ["Sequence ended before all processes completed."]}
+    def handle_room_click(self, pos):
+        # Door exit area.
+        door_rect = pygame.Rect(355, 200, 90, 200)
+        if door_rect.collidepoint(pos):
+            if self.progress["key"]:
+                self.progress["escaped"] = True
+                if self.room_index == len(ROOMS) - 1:
+                    self.mode = "freedom"
+                    self.message = "SYSTEM ESCAPED. You beat the OS."
+                else:
+                    self.mode = "hallway"
+                    self.transition_timer = 0
+                    self.message = "Door unlocked. Enter the hallway."
+            else:
+                self.message = "The door is locked. You need the key first."
+            return
+
+        obj = self.object_at(pos)
+        if obj is None:
+            self.message = random.choice([
+                "You tap the wall. The wall says nothing. Rude.",
+                "Dusty pixels. No clue here.",
+                "The OS whispers: segmentation fault... just kidding.",
+            ])
+            return
+
+        if obj == "hint1":
+            self.progress["hint1"] = True
+            self.message = "Hint #1 found: " + self.room["hint1"]
+        elif obj == "puzzle":
+            if not self.progress["hint1"]:
+                self.message = "This puzzle panel is asleep. Find Hint #1 first."
+            elif self.progress["question_solved"]:
+                self.message = "Already solved: " + self.room["hint2"]
+            else:
+                self.mode = "question"
+                self.answer_text = ""
+                self.message = "Answer the OS question to unlock Hint #2."
+        elif obj == "hint3":
+            if not self.progress["question_solved"]:
+                self.message = "Hint #2 is locked. Solve the OS question first."
+            else:
+                self.progress["hint3"] = True
+                self.message = "Hint #3 found: " + self.room["hint3"]
+        elif obj == "key":
+            if not self.progress["hint3"]:
+                self.message = "You sense a key here... but the riddle has not revealed it yet."
+            else:
+                self.progress["key"] = True
+                self.message = "KEY FOUND! Click the door to escape this room."
+        else:
+            label = self.room["objects"][obj][4]
+            self.progress["searched_decoys"].add(label)
+            self.message = f"You searched the {label}. It contains crumbs, dust, and zero kernel privileges."
+
+    def handle_question_key(self, event):
+        if event.key == pygame.K_ESCAPE:
+            self.mode = "room"
+            self.message = "Question closed."
+        elif event.key == pygame.K_RETURN:
+            ans = normalize(self.answer_text)
+            valid = [normalize(a) for a in self.room["answers"]]
+            if ans in valid:
+                self.progress["question_solved"] = True
+                self.mode = "room"
+                self.message = self.room["hint2"]
+            else:
+                self.message = "Nope. The OS beeped judgmentally. Try again."
+        elif event.key == pygame.K_BACKSPACE:
+            self.answer_text = self.answer_text[:-1]
+        else:
+            if event.unicode and len(self.answer_text) < 45:
+                self.answer_text += event.unicode
+
+    def handle_event(self, event):
+        if event.type == pygame.QUIT:
+            return False
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_ESCAPE and self.mode != "question":
+                return False
+            if self.mode == "question":
+                self.handle_question_key(event)
+            elif self.mode == "hallway":
+                if event.key in (pygame.K_RETURN, pygame.K_SPACE):
+                    self.room_index += 1
+                    self.mode = "room"
+                    self.message = "New room loaded. Click around until you find Hint #1."
+            elif self.mode == "freedom":
+                if event.key == pygame.K_r:
+                    self.room_index = 0
+                    self.mode = "room"
+                    self.room_progress = [self.new_progress() for _ in ROOMS]
+                    self.message = "Reset complete. Back to Room 1."
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            if self.mode == "room":
+                self.handle_room_click(event.pos)
+            elif self.mode == "hallway":
+                # Click next door.
+                if pygame.Rect(300, 235, 200, 135).collidepoint(event.pos):
+                    self.room_index += 1
+                    self.mode = "room"
+                    self.message = "New room loaded. Click around until you find Hint #1."
+        return True
+
+    def draw_room_objects(self):
+        for obj_id, data in self.room["objects"].items():
+            x, y, w, h, label = data
+            rect = pygame.Rect(x, y, w, h)
+            accent = self.room["palette"][2]
+            fill = (18, 18, 28)
+            border = (95, 95, 110)
+
+            if obj_id == "hint1" and not self.progress["hint1"]:
+                border = accent
+            elif obj_id == "puzzle" and self.progress["hint1"] and not self.progress["question_solved"]:
+                border = (255, 235, 120)
+            elif obj_id == "hint3" and self.progress["question_solved"] and not self.progress["hint3"]:
+                border = accent
+            elif obj_id == "key" and self.progress["hint3"] and not self.progress["key"]:
+                border = (255, 240, 80)
+                fill = (45, 35, 8)
+            elif obj_id == "key" and self.progress["key"]:
+                border = (110, 255, 110)
+
+            pygame.draw.rect(self.screen, fill, rect, border_radius=10)
+            pygame.draw.rect(self.screen, border, rect, 2, border_radius=10)
+
+            # Little icon-ish shapes.
+            cx, cy = rect.center
+            if obj_id == "key":
+                pygame.draw.circle(self.screen, border, (cx - 18, cy), 10, 2)
+                pygame.draw.line(self.screen, border, (cx - 8, cy), (cx + 32, cy), 3)
+                pygame.draw.line(self.screen, border, (cx + 20, cy), (cx + 20, cy + 10), 2)
+            elif obj_id == "puzzle":
+                pygame.draw.rect(self.screen, border, pygame.Rect(cx - 25, cy - 18, 50, 36), 2)
+                pygame.draw.line(self.screen, border, (cx - 18, cy - 4), (cx + 18, cy - 4), 2)
+                pygame.draw.line(self.screen, border, (cx - 18, cy + 8), (cx + 12, cy + 8), 2)
+            else:
+                pygame.draw.circle(self.screen, border, (cx, cy - 8), 12, 2)
+                pygame.draw.line(self.screen, border, (cx, cy + 4), (cx, cy + 20), 2)
+
+            label_img = self.small_font.render(label, True, (230, 230, 240))
+            self.screen.blit(label_img, (x + 8, y + h - 24))
+
+    def draw_hud(self):
+        pygame.draw.rect(self.screen, (5, 5, 12), pygame.Rect(0, 0, SCREEN_WIDTH, 70))
+        self.screen.blit(self.title_font.render(self.room["title"], True, (255, 255, 255)), (20, 12))
+        progress_text = (
+            f"Hint1: {'Y' if self.progress['hint1'] else 'N'}  |  "
+            f"Question: {'Y' if self.progress['question_solved'] else 'N'}  |  "
+            f"Riddle: {'Y' if self.progress['hint3'] else 'N'}  |  "
+            f"Key: {'Y' if self.progress['key'] else 'N'}"
+        )
+        self.screen.blit(self.small_font.render(progress_text, True, self.room["palette"][2]), (22, 46))
+        self.screen.blit(self.small_font.render(f"Room {self.room_index + 1}/9", True, (190, 190, 210)), (700, 46))
+
+    def draw_info_panel(self):
+        panel = pygame.Rect(20, 475, 760, 105)
+        pygame.draw.rect(self.screen, (5, 5, 12), panel, border_radius=12)
+        pygame.draw.rect(self.screen, self.room["palette"][2], panel, 2, border_radius=12)
+        draw_text(self.screen, self.small_font, "OS Concept: " + self.room["concept"], 34, 488, (190, 220, 255), 730)
+        draw_text(self.screen, self.small_font, "Log: " + self.message, 34, 528, (245, 245, 245), 730)
+
+    def draw_room(self):
+        draw_escape_background(self.screen, self.room, self.tick)
+        self.draw_hud()
+        draw_text(self.screen, self.small_font, self.room["theme"], 75, 92, (220, 220, 230), 650)
+        self.draw_room_objects()
+
+        # Door label changes after key.
+        door_text = "EXIT" if self.progress["key"] else "LOCKED"
+        door_color = (120, 255, 120) if self.progress["key"] else (255, 90, 90)
+        self.screen.blit(self.small_font.render(door_text, True, door_color), (374, 410))
+        self.draw_info_panel()
+
+    def draw_question(self):
+        self.draw_room()
+        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 185))
+        self.screen.blit(overlay, (0, 0))
+        box = pygame.Rect(90, 140, 620, 310)
+        pygame.draw.rect(self.screen, (10, 12, 24), box, border_radius=16)
+        pygame.draw.rect(self.screen, self.room["palette"][2], box, 3, border_radius=16)
+        self.screen.blit(self.title_font.render("OS QUESTION LOCK", True, (255, 255, 255)), (120, 165))
+        draw_text(self.screen, self.body_font, self.room["question"], 120, 220, (235, 240, 255), 560)
+        input_rect = pygame.Rect(120, 320, 560, 45)
+        pygame.draw.rect(self.screen, (0, 0, 0), input_rect, border_radius=8)
+        pygame.draw.rect(self.screen, (255, 255, 255), input_rect, 2, border_radius=8)
+        self.screen.blit(self.body_font.render(self.answer_text + "_", True, self.room["palette"][2]), (132, 332))
+        self.screen.blit(self.small_font.render("ENTER = submit   ESC = close", True, (190, 190, 205)), (120, 388))
+        self.screen.blit(self.small_font.render(self.message, True, (255, 220, 150)), (120, 415))
+
+    def draw_hallway(self):
+        self.screen.fill((3, 3, 10))
+        for i in range(16):
+            shade = 20 + i * 7
+            pygame.draw.rect(self.screen, (shade // 3, shade // 3, shade), pygame.Rect(40 + i * 20, 40 + i * 14, 720 - i * 40, 520 - i * 28), 1)
+        self.screen.blit(self.big_font.render("HALLWAY", True, (255, 255, 255)), (275, 90))
+        done = self.room["topic"]
+        next_room = ROOMS[self.room_index + 1]["topic"]
+        draw_text(self.screen, self.body_font, f"You escaped {done}. The OS hallway hums like a cursed server rack.", 120, 170, (230, 230, 240), 560)
+        door = pygame.Rect(300, 235, 200, 135)
+        draw_button(self.screen, door, f"Enter {next_room}", self.body_font, (18, 18, 35), ROOMS[self.room_index + 1]["palette"][2])
+        self.screen.blit(self.small_font.render("Click the door or press ENTER/SPACE.", True, (190, 190, 205)), (250, 405))
+
+    def draw_freedom(self):
+        self.screen.fill((1, 7, 10))
+        for _ in range(80):
+            x = random.randint(0, SCREEN_WIDTH)
+            y = random.randint(0, SCREEN_HEIGHT)
+            pygame.draw.circle(self.screen, random.choice([(0, 255, 180), (0, 220, 255), (255, 255, 255)]), (x, y), 1)
+        self.screen.blit(self.big_font.render("FREEDOM.EXE", True, (0, 255, 180)), (235, 120))
+        draw_text(self.screen, self.body_font, "You escaped the Operating System. The kernel releases your process, closes the file, clears memory, and pretends this was normal behavior.", 120, 205, (240, 240, 255), 560)
+        draw_text(self.screen, self.body_font, "Final status: EXIT CODE 0 — YAY", 250, 330, (255, 240, 120), 400)
+        self.screen.blit(self.small_font.render("Press R to restart or ESC to quit.", True, (200, 200, 210)), (275, 430))
+
+    def draw(self):
+        if self.mode == "room":
+            self.draw_room()
+        elif self.mode == "question":
+            self.draw_question()
+        elif self.mode == "hallway":
+            self.draw_hallway()
+        elif self.mode == "freedom":
+            self.draw_freedom()
+        pygame.display.flip()
+
+    def run(self):
+        running = True
+        while running:
+            self.tick += 1
+            for event in pygame.event.get():
+                running = self.handle_event(event)
+                if not running:
+                    break
+            self.draw()
+            self.clock.tick(60)
 
 
 def run_game():
     screen = pygame.display.get_surface()
     if screen is None:
-        screen = pygame.display.set_mode((800, 600))
-
-    clock = pygame.time.Clock()
-    title_font = pygame.font.SysFont(None, 46)
-    body_font = pygame.font.SysFont(None, 30)
-    small_font = pygame.font.SysFont(None, 24)
-
-    room1_config = ROOM1_CONFIG
-    tasks = [dict(t) for t in room1_config["tasks"]]
-    default_tasks = [dict(t) for t in room1_config["tasks"]]
-    selected_algorithm = "FCFS"
-    room1_sim = _build_scheduler_timeline(tasks, selected_algorithm, room1_config["quantum"])
-    room1_replay_index = len(room1_sim["snapshots"]) - 1
-    room1_feedback = []
-    message = "Room 1: Pick the best scheduling algorithm to unlock Room 2."
-    room_state = "room1"
-    wrong_submit_attempts = 0
-    submit_attempts = 0
-    max_submit_attempts = room1_config["max_submit_attempts"]
-    task_edits_used = 0
-    max_task_edits = room1_config["max_task_edits"]
-    room2_config = ROOM2_CONFIG
-    room2_sequence = []
-    room2_max_steps = room2_config["max_steps"]
-    room2_status = "not-started"
-    room2_timeline = []
-    room2_replay_index = -1
-    room2_chain = []
-
-    running = True
-    while running:
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                return
-
-            if event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_ESCAPE:
-                    return
-
-                if room_state == "room2":
-                    if event.key == pygame.K_r:
-                        room2_sequence = []
-                        room2_status = "not-started"
-                        room2_timeline = []
-                        room2_replay_index = -1
-                        room2_chain = []
-                        message = "Room 2 reset."
-                    elif room2_status != "not-started":
-                        if event.key == pygame.K_LEFT:
-                            room2_replay_index = max(0, room2_replay_index - 1)
-                            message = f"Step {room2_replay_index + 1} / {len(room2_timeline)}."
-                        elif event.key == pygame.K_RIGHT:
-                            room2_replay_index = min(len(room2_timeline) - 1, room2_replay_index + 1)
-                            message = f"Step {room2_replay_index + 1} / {len(room2_timeline)}."
-                        elif event.key == pygame.K_SPACE:
-                            room2_replay_index = len(room2_timeline) - 1
-                            message = "Jumped to final step."
-                    else:
-                        if event.key == pygame.K_BACKSPACE:
-                            if room2_sequence:
-                                room2_sequence.pop()
-                                message = "Removed last step from allocation order."
-                        elif event.key in (pygame.K_1, pygame.K_2, pygame.K_3):
-                            if len(room2_sequence) < room2_max_steps:
-                                key_to_process = {
-                                    pygame.K_1: "P1",
-                                    pygame.K_2: "P2",
-                                    pygame.K_3: "P3",
-                                }
-                                room2_sequence.append(key_to_process[event.key])
-                                message = (
-                                    f"Added {key_to_process[event.key]}. "
-                                    f"Steps: {len(room2_sequence)}/{room2_max_steps}."
-                                )
-                            else:
-                                message = "Order is full. Press Enter to simulate or Backspace to edit."
-                        elif event.key == pygame.K_RETURN:
-                            if len(room2_sequence) < room2_max_steps:
-                                message = f"Add {room2_max_steps - len(room2_sequence)} more steps before submit."
-                            else:
-                                simulation = _simulate_deadlock_resolution(room2_sequence, room2_config)
-                                room2_timeline = simulation["timeline"]
-                                room2_chain = simulation.get("chain", [])
-                                room2_replay_index = len(room2_timeline) - 1
-                                if simulation["success"]:
-                                    room2_status = "solved"
-                                    message = "Deadlock prevented! Room 2 cleared!"
-                                else:
-                                    room2_status = "failed"
-                                    message = "Deadlock occurred. Press R to reset and try a safer order."
-                    continue
-
-                if room_state == "room1_failed":
-                    if event.key == pygame.K_r:
-                        tasks = [dict(task) for task in default_tasks]
-                        selected_algorithm = "FCFS"
-                        room1_sim = _build_scheduler_timeline(tasks, selected_algorithm, room1_config["quantum"])
-                        room1_replay_index = len(room1_sim["snapshots"]) - 1
-                        room1_feedback = []
-                        room_state = "room1"
-                        wrong_submit_attempts = 0
-                        submit_attempts = 0
-                        task_edits_used = 0
-                        message = "Room 1 reset. Try a new strategy."
-                    continue
-
-                if event.key == pygame.K_LEFT:
-                    room1_replay_index = max(0, room1_replay_index - 1)
-                    message = f"Tick {room1_sim['snapshots'][room1_replay_index]['tick']}."
-                elif event.key == pygame.K_RIGHT:
-                    room1_replay_index = min(len(room1_sim["snapshots"]) - 1, room1_replay_index + 1)
-                    message = f"Tick {room1_sim['snapshots'][room1_replay_index]['tick']}."
-                elif event.key == pygame.K_SPACE:
-                    room1_replay_index = len(room1_sim["snapshots"]) - 1
-                    message = "Jumped to final tick."
-                elif event.key == pygame.K_RETURN:
-                    submit_attempts += 1
-                    best_algorithms = _best_algorithms_for_tasks(tasks)
-                    room1_feedback = _educational_feedback_room1(tasks, selected_algorithm)
-                    if selected_algorithm in best_algorithms:
-                        room_state = "room2"
-                        wrong_submit_attempts = 0
-                        room2_sequence = []
-                        room2_status = "not-started"
-                        room2_timeline = []
-                        room2_replay_index = -1
-                        room2_chain = []
-                        message = "Access granted. Room 2 unlocked!"
-                    else:
-                        wrong_submit_attempts += 1
-                        if submit_attempts >= max_submit_attempts:
-                            room_state = "room1_failed"
-                            message = "All attempts used. Terminal locked. Press R to reset."
-                        else:
-                            message = f"Incorrect. {max_submit_attempts - submit_attempts} attempt(s) left."
-                elif event.key == pygame.K_1:
-                    selected_algorithm = "FCFS"
-                    room1_sim = _build_scheduler_timeline(tasks, selected_algorithm, room1_config["quantum"])
-                    room1_replay_index = len(room1_sim["snapshots"]) - 1
-                    room1_feedback = []
-                    message = "Algorithm set to FCFS."
-                elif event.key == pygame.K_2:
-                    selected_algorithm = "SJF"
-                    room1_sim = _build_scheduler_timeline(tasks, selected_algorithm, room1_config["quantum"])
-                    room1_replay_index = len(room1_sim["snapshots"]) - 1
-                    room1_feedback = []
-                    message = "Algorithm set to SJF."
-                elif event.key == pygame.K_3:
-                    selected_algorithm = "RR"
-                    room1_sim = _build_scheduler_timeline(tasks, selected_algorithm, room1_config["quantum"])
-                    room1_replay_index = len(room1_sim["snapshots"]) - 1
-                    room1_feedback = []
-                    message = "Algorithm set to Round Robin (q=2)."
-                elif event.key == pygame.K_a:
-                    if task_edits_used >= max_task_edits:
-                        message = "No task edits left. Submit or press R to reset."
-                    else:
-                        next_id = len(tasks) + 1
-                        burst = 2 + (next_id % 4)
-                        arrival = max(0, next_id - 2)
-                        tasks.append({"name": f"T{next_id}", "arrival": arrival, "burst": burst})
-                        task_edits_used += 1
-                        room1_sim = _build_scheduler_timeline(tasks, selected_algorithm, room1_config["quantum"])
-                        room1_replay_index = len(room1_sim["snapshots"]) - 1
-                        room1_feedback = []
-                        message = f"Added T{next_id}. Edits left: {max_task_edits - task_edits_used}."
-                elif event.key == pygame.K_r:
-                    tasks = [dict(task) for task in default_tasks]
-                    selected_algorithm = "FCFS"
-                    room1_sim = _build_scheduler_timeline(tasks, selected_algorithm, room1_config["quantum"])
-                    room1_replay_index = len(room1_sim["snapshots"]) - 1
-                    room1_feedback = []
-                    wrong_submit_attempts = 0
-                    submit_attempts = 0
-                    task_edits_used = 0
-                    message = "Tasks reset to default."
-
-        screen.fill((0, 0, 0))
-
-        if room_state == "room2":
-            # --- resolve display snapshot ---
-            if room2_replay_index >= 0 and room2_timeline:
-                snap = room2_timeline[room2_replay_index]
-                disp_states = snap["states"]
-                disp_held = snap["held"]
-                disp_resources = snap["resources"]
-                current_event = snap["event"]
-                current_step_num = snap["step"]
-            else:
-                disp_states = {p: "ready" for p in room2_config["processes"]}
-                disp_held = {p: set() for p in room2_config["processes"]}
-                disp_resources = {r: None for r in room2_config["resources"]}
-                current_event = "No simulation yet."
-                current_step_num = 0
-
-            # Title
-            screen.blit(title_font.render("Room 2: Deadlock Prevention", True, (255, 255, 255)), (20, 8))
-
-            # Mission panel (3 lines)
-            pygame.draw.rect(screen, (220, 220, 220), pygame.Rect(20, 48, 760, 74), 2)
-            mission_lines = [
-                "Mission: Prevent deadlock by choosing a safe resource allocation order.",
-                "P1 needs R1->R2 | P2 needs R2->R3 | P3 needs R3->R1   (press a key twice to finish a process)",
-                "Build 6 steps with [1]=P1 [2]=P2 [3]=P3 then ENTER. After simulating use LEFT/RIGHT to replay.",
-            ]
-            for i, line in enumerate(mission_lines):
-                screen.blit(small_font.render(line, True, (210, 210, 210)), (28, 56 + i * 22))
-
-            # Allocation order & controls
-            pygame.draw.rect(screen, (220, 220, 220), pygame.Rect(20, 126, 760, 46), 2)
-            seq_text = " -> ".join(room2_sequence) if room2_sequence else "(empty)"
-            screen.blit(small_font.render("Order:", True, (180, 180, 180)), (28, 133))
-            screen.blit(small_font.render(
-                f"{seq_text}   [{len(room2_sequence)}/{room2_max_steps}]", True, (220, 220, 220)), (80, 133))
-            if room2_status == "not-started":
-                ctrl = "[1][2][3] add  [BACKSPACE] undo  [ENTER] simulate  [R] reset  [ESC] exit"
-            else:
-                ctrl = "[LEFT]/[RIGHT] step replay  [SPACE] jump to end  [R] reset  [ESC] exit"
-            screen.blit(small_font.render(ctrl, True, (160, 160, 160)), (28, 155))
-
-            # State color map: bg, fg
-            state_colors = {
-                "ready":      ((40, 40, 90),   (140, 140, 255)),
-                "running":    ((20, 80, 20),   (100, 255, 100)),
-                "blocked":    ((100, 20, 20),  (255, 100, 100)),
-                "terminated": ((25, 25, 25),   (110, 110, 110)),
-            }
-
-            # Thread state boxes (left column x=20, w=228)
-            for i, pid in enumerate(room2_config["processes"]):
-                bx, by = 20, 178 + i * 56
-                state = disp_states.get(pid, "ready")
-                bg, fg = state_colors[state]
-                pygame.draw.rect(screen, bg, pygame.Rect(bx, by, 228, 50))
-                pygame.draw.rect(screen, (200, 200, 200), pygame.Rect(bx, by, 228, 50), 1)
-                held_list = ", ".join(sorted(disp_held.get(pid, set()))) or "none"
-                screen.blit(small_font.render(f"{pid}  [{state.upper()}]", True, fg), (bx + 8, by + 8))
-                screen.blit(small_font.render(f"holds: {held_list}", True, (170, 170, 170)), (bx + 8, by + 28))
-
-            # Resource ownership boxes (middle column x=258, w=180)
-            for i, rid in enumerate(room2_config["resources"]):
-                bx, by = 258, 178 + i * 56
-                owner = disp_resources.get(rid)
-                if owner:
-                    bg, fg = (55, 40, 10), (255, 200, 80)
-                    owner_text = f"owner: {owner}"
-                else:
-                    bg, fg = (20, 20, 20), (100, 200, 100)
-                    owner_text = "free"
-                pygame.draw.rect(screen, bg, pygame.Rect(bx, by, 180, 50))
-                pygame.draw.rect(screen, (200, 200, 200), pygame.Rect(bx, by, 180, 50), 1)
-                screen.blit(small_font.render(rid, True, fg), (bx + 8, by + 8))
-                screen.blit(small_font.render(owner_text, True, (170, 170, 170)), (bx + 8, by + 28))
-
-            # Current step panel (right column x=448, w=332)
-            pygame.draw.rect(screen, (20, 20, 40), pygame.Rect(448, 178, 332, 166))
-            pygame.draw.rect(screen, (200, 200, 200), pygame.Rect(448, 178, 332, 166), 1)
-            screen.blit(small_font.render("Current Step", True, (180, 180, 180)), (458, 186))
-            if room2_replay_index >= 0:
-                screen.blit(small_font.render(
-                    f"Step {current_step_num} / {len(room2_timeline)}", True, (220, 220, 180)), (458, 208))
-                words = current_event.split()
-                lines, cur_line = [], ""
-                for word in words:
-                    test = (cur_line + " " + word).strip()
-                    if small_font.size(test)[0] < 312:
-                        cur_line = test
-                    else:
-                        lines.append(cur_line)
-                        cur_line = word
-                if cur_line:
-                    lines.append(cur_line)
-                for j, ln in enumerate(lines[:4]):
-                    c = (255, 100, 100) if "DEADLOCK" in ln else (220, 220, 220)
-                    screen.blit(small_font.render(ln, True, c), (458, 230 + j * 22))
-                screen.blit(small_font.render(
-                    f"<- {room2_replay_index} / {len(room2_timeline) - 1} ->",
-                    True, (130, 130, 130)), (458, 324))
-            else:
-                screen.blit(small_font.render("Build order and press ENTER.", True, (140, 140, 140)), (458, 208))
-
-            # Event log panel
-            pygame.draw.rect(screen, (12, 12, 28), pygame.Rect(20, 352, 760, 134))
-            pygame.draw.rect(screen, (220, 220, 220), pygame.Rect(20, 352, 760, 134), 1)
-            screen.blit(body_font.render("Event Log", True, (255, 255, 255)), (30, 360))
-            if room2_timeline and room2_replay_index >= 0:
-                visible = room2_timeline[:room2_replay_index + 1]
-                for j, s in enumerate(visible[-5:]):
-                    is_cur = (j == len(visible[-5:]) - 1)
-                    color = (255, 255, 100) if is_cur else (170, 170, 170)
-                    prefix = "> " if is_cur else "  "
-                    screen.blit(small_font.render(f"{prefix}{s['step']}. {s['event']}", True, color), (30, 386 + j * 20))
-            else:
-                screen.blit(small_font.render("No events yet.", True, (100, 100, 100)), (30, 386))
-
-            # Educational deadlock feedback
-            if room2_status == "failed" and room2_chain:
-                screen.blit(small_font.render("Deadlock: circular wait —", True, (255, 120, 60)), (20, 492))
-                chain_text = " | ".join(room2_chain)
-                screen.blit(small_font.render(chain_text[:98], True, (255, 170, 120)), (20, 511))
-
-            # Status & message
-            status_color = (100, 255, 100) if room2_status == "solved" else (255, 100, 100) if room2_status == "failed" else (180, 180, 180)
-            screen.blit(small_font.render(f"Status: {room2_status}", True, status_color), (20, 534))
-            screen.blit(small_font.render(message, True, (200, 200, 200)), (20, 556))
-
-            pygame.display.flip()
-            clock.tick(60)
-            continue
-
-
-        if room_state == "room1_failed":
-            pygame.draw.rect(screen, (220, 220, 220), pygame.Rect(130, 140, 540, 300), 2)
-            title = title_font.render("Room 1 Locked", True, (255, 255, 255))
-            line1 = body_font.render("0 tries left.", True, (220, 220, 220))
-            line2 = small_font.render("Press [R] to reset Room 1 and try again.", True, (220, 220, 220))
-            line3 = small_font.render("Press [ESC] to exit.", True, (220, 220, 220))
-            screen.blit(title, (280, 190))
-            screen.blit(line1, (240, 250))
-            screen.blit(line2, (230, 305))
-            screen.blit(line3, (320, 340))
-
-            message_surface = small_font.render(message, True, (220, 220, 220))
-            screen.blit(message_surface, (30, 555))
-
-            pygame.display.flip()
-            clock.tick(60)
-            continue
-
-        # ── Room 1 Renderer ─────────────────────────────────────────────────
-        screen.blit(title_font.render("Room 1: CPU Scheduling", True, (255, 255, 255)), (20, 8))
-
-        # Mission / info bar
-        pygame.draw.rect(screen, (220, 220, 220), pygame.Rect(20, 48, 760, 46), 2)
-        screen.blit(small_font.render(
-            "Mission: Identify the most efficient scheduling algorithm for these tasks.",
-            True, (210, 210, 210)), (28, 55))
-        screen.blit(small_font.render(
-            f"Attempts left: {max_submit_attempts - submit_attempts}  |  Task edits left: {max_task_edits - task_edits_used}  |  "
-            f"[1]=FCFS  [2]=SJF  [3]=RR  [A]=add task  [ENTER]=submit  [LEFT/RIGHT]=step  [R]=reset  [ESC]=exit",
-            True, (160, 160, 160)), (28, 74))
-
-        # Algorithm selector buttons
-        alg_labels = [("FCFS", "1"), ("SJF", "2"), ("RR", "3")]
-        for i, (alg, key) in enumerate(alg_labels):
-            bx = 20 + i * 140
-            selected = selected_algorithm == alg
-            bg = (60, 100, 60) if selected else (20, 20, 20)
-            border = (100, 220, 100) if selected else (100, 100, 100)
-            pygame.draw.rect(screen, bg, pygame.Rect(bx, 100, 130, 30))
-            pygame.draw.rect(screen, border, pygame.Rect(bx, 100, 130, 30), 2)
-            label_color = (180, 255, 180) if selected else (160, 160, 160)
-            screen.blit(small_font.render(f"[{key}] {alg}", True, label_color), (bx + 10, 108))
-
-        # ── Task state boxes (left, y=140, w=230) ───────────────────────────
-        snap = room1_sim["snapshots"][room1_replay_index]
-        task_state_colors = {
-            "not-arrived": ((15, 15, 15),   (80, 80, 80)),
-            "ready":        ((40, 40, 90),   (140, 140, 255)),
-            "running":      ((20, 80, 20),   (100, 255, 100)),
-            "terminated":   ((25, 25, 25),   (110, 110, 110)),
-        }
-        for i, task in enumerate(tasks):
-            bx, by = 20, 140 + i * 52
-            state = snap["states"].get(task["name"], "not-arrived")
-            bg, fg = task_state_colors[state]
-            pygame.draw.rect(screen, bg, pygame.Rect(bx, by, 230, 46))
-            pygame.draw.rect(screen, (180, 180, 180), pygame.Rect(bx, by, 230, 46), 1)
-            screen.blit(small_font.render(f"{task['name']}  [{state.upper()}]", True, fg), (bx + 8, by + 6))
-            screen.blit(small_font.render(
-                f"arrival={task['arrival']}  burst={task['burst']}", True, (150, 150, 150)), (bx + 8, by + 26))
-
-        # ── Per-task wait/turnaround table (middle, x=260) ──────────────────
-        pygame.draw.rect(screen, (15, 15, 30), pygame.Rect(260, 140, 240, 46 * len(tasks) + 4))
-        pygame.draw.rect(screen, (180, 180, 180), pygame.Rect(260, 140, 240, 46 * len(tasks) + 4), 1)
-        screen.blit(small_font.render("wait  turnaround", True, (130, 130, 130)), (268, 140))
-        for i, task in enumerate(tasks):
-            by = 140 + 4 + i * 46 + 20
-            w = room1_sim["wait_map"].get(task["name"], 0)
-            t = room1_sim["turnaround_map"].get(task["name"], 0)
-            screen.blit(small_font.render(f"{task['name']}: {w:>3}    {t:>3}", True, (200, 200, 200)), (268, by))
-
-        # ── Current tick step panel (right, x=510) ──────────────────────────
-        pygame.draw.rect(screen, (20, 20, 40), pygame.Rect(510, 140, 270, 46 * len(tasks) + 4))
-        pygame.draw.rect(screen, (180, 180, 180), pygame.Rect(510, 140, 270, 46 * len(tasks) + 4), 1)
-        tick_label = f"Tick {snap['tick']}  [{room1_replay_index + 1}/{len(room1_sim['snapshots'])}]"
-        screen.blit(small_font.render(tick_label, True, (200, 200, 180)), (518, 148))
-        running_name = snap["running"]
-        if running_name:
-            screen.blit(small_font.render(f"CPU: {running_name} running", True, (100, 255, 100)), (518, 170))
-        else:
-            screen.blit(small_font.render("CPU: idle", True, (130, 130, 130)), (518, 170))
-        screen.blit(small_font.render(snap["slice_label"], True, (180, 180, 100)), (518, 192))
-        screen.blit(small_font.render(
-            f"Avg wait: ?  Avg turn: {room1_sim['avg_turnaround']:.2f}",
-            True, (180, 220, 180)), (518, 214))
-        screen.blit(small_font.render("<- LEFT / RIGHT ->", True, (100, 100, 100)), (518, 236))
-
-        # ── CPU Execution Timeline bar ───────────────────────────────────────
-        tl_x, tl_y, tl_h = 20, 312, 30
-        bar_colors = {}
-        palette = [(100, 180, 255), (100, 255, 160), (255, 200, 80), (255, 120, 120), (200, 120, 255)]
-        for ci, task in enumerate(tasks):
-            bar_colors[task["name"]] = palette[ci % len(palette)]
-        all_slices = room1_sim["slices_raw"]
-        max_tick = all_slices[-1][2] if all_slices else 1
-        px_per_tick = min(700 / max(max_tick, 1), 28)
-        pygame.draw.rect(screen, (15, 15, 15), pygame.Rect(tl_x, tl_y, 760, tl_h + 18))
-        pygame.draw.rect(screen, (80, 80, 80), pygame.Rect(tl_x, tl_y, 760, tl_h + 18), 1)
-        current_tick = snap["tick"]
-        for (sname, t0, t1) in all_slices:
-            rx = int(tl_x + t0 * px_per_tick)
-            rw = max(int((t1 - t0) * px_per_tick) - 1, 1)
-            color = bar_colors.get(sname, (150, 150, 150))
-            # dim slices not yet reached
-            if t1 <= current_tick:
-                draw_color = color
-            else:
-                draw_color = tuple(max(c - 120, 10) for c in color)
-            pygame.draw.rect(screen, draw_color, pygame.Rect(rx, tl_y + 2, rw, tl_h - 4))
-            if rw > 20:
-                screen.blit(small_font.render(sname, True, (0, 0, 0)), (rx + 2, tl_y + 8))
-        # tick markers
-        for t in range(0, max_tick + 1, max(1, max_tick // 10)):
-            mx = int(tl_x + t * px_per_tick)
-            pygame.draw.line(screen, (80, 80, 80), (mx, tl_y + tl_h - 2), (mx, tl_y + tl_h + 14))
-            screen.blit(small_font.render(str(t), True, (100, 100, 100)), (mx, tl_y + tl_h + 2))
-        # playhead
-        ph_x = int(tl_x + current_tick * px_per_tick)
-        pygame.draw.line(screen, (255, 255, 0), (ph_x, tl_y), (ph_x, tl_y + tl_h + 18))
-
-        # ── Educational feedback panel ───────────────────────────────────────
-        fb_y = 370
-        pygame.draw.rect(screen, (15, 10, 25), pygame.Rect(20, fb_y, 760, 80))
-        pygame.draw.rect(screen, (100, 80, 140), pygame.Rect(20, fb_y, 760, 80), 1)
-        screen.blit(small_font.render("Analysis", True, (160, 130, 200)), (28, fb_y + 5))
-        if room1_feedback:
-            for j, fb_line in enumerate(room1_feedback[:3]):
-                screen.blit(small_font.render(fb_line, True, (210, 190, 255)), (28, fb_y + 24 + j * 20))
-        else:
-            screen.blit(small_font.render(
-                "Press [ENTER] to submit your algorithm choice and see analysis.", True, (100, 100, 120)), (28, fb_y + 24))
-
-        # ── Status / message ─────────────────────────────────────────────────
-        screen.blit(small_font.render(message, True, (200, 200, 200)), (20, 458))
-
-        pygame.display.flip()
-        clock.tick(60)
-
+        screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
+    pygame.display.set_caption("OS Escape Room: Escape the Operating System")
+    EscapeRoomGame(screen).run()
